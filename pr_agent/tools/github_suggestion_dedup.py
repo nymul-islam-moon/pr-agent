@@ -11,6 +11,7 @@ CODE_FINDING_MARKER_RE = re.compile(r"<!--\s*pr-agent-finding-code:\s*([0-9a-f]{
 MALFORMED_FINDING_MARKER_RE = re.compile(r"<!--\s*pr-agent-finding(?:-code)?:", re.IGNORECASE)
 DECISION_RE = re.compile(r"^\s*pr-agent:\s*(ignore|accepted-risk|fixed)\s*$", re.IGNORECASE | re.MULTILINE)
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+MAINTAINER_PERMISSIONS = {"admin", "maintain", "write"}
 
 SUGGESTION_BLOCK_RE = re.compile(r"```suggestion[^\n]*\n(.*?)```", re.DOTALL)
 DIFF_BLOCK_RE = re.compile(r"```diff[^\n]*\n(.*?)```", re.DOTALL)
@@ -118,6 +119,11 @@ def parse_decision(body: str) -> str | None:
     return match.group(1).lower() if match else None
 
 
+def is_maintainer(comment: dict[str, Any]) -> bool:
+    return (str(comment.get("author_association", "")).upper() in MAINTAINER_ASSOCIATIONS
+            or str(comment.get("author_permission", "")).lower() in MAINTAINER_PERMISSIONS)
+
+
 def preserved_markers(body: str) -> str:
     """Return the finding markers present in a body, ready to re-append.
 
@@ -213,7 +219,7 @@ def index_prior_findings(history: dict[str, Any], bot_logins: list[str], honor_d
             for reply in sorted(thread_comments, key=lambda item: item.get("id", 0)):
                 if reply is root or str(reply.get("author_login", "")).casefold() in recognized_logins:
                     continue
-                if str(reply.get("author_association", "")).upper() not in MAINTAINER_ASSOCIATIONS:
+                if not is_maintainer(reply):
                     continue
                 decision = parse_decision(reply.get("body", "")) or decision
         path, semantic, context, proposed = _legacy_parts(root)

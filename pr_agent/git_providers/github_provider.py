@@ -30,7 +30,7 @@ from ..algo.utils import (Range, clip_tokens, comment_matches_any_identity,
 from ..config_loader import get_settings
 from ..log import get_logger
 from ..servers.utils import RateLimitExceeded
-from ..tools.github_suggestion_dedup import preserved_markers
+from ..tools.github_suggestion_dedup import parse_decision, preserved_markers
 from .git_provider import (MAX_FILES_ALLOWED_FULL, FilePatchInfo, GitProvider,
                            IncrementalPR, get_cached_global_settings)
 
@@ -777,6 +777,20 @@ class GithubProvider(GitProvider):
                 "author_login": user.get("login", getattr(getattr(comment, "user", None), "login", "")),
                 "author_association": raw.get("author_association", ""),
             })
+
+        # author_association hides private org membership from GITHUB_TOKEN (reported as CONTRIBUTOR),
+        # so decision replies also carry the author's repository permission.
+        permissions = {}
+        for item in comments:
+            login = item["author_login"]
+            if item["in_reply_to_id"] and login and parse_decision(item["body"]):
+                if login not in permissions:
+                    try:
+                        permissions[login] = self._get_repo().get_collaborator_permission(login)
+                    except Exception as e:
+                        get_logger().warning(f"Failed to get repository permission for {login}: {e}")
+                        permissions[login] = ""
+                item["author_permission"] = permissions[login]
 
         owner, repo = self.repo.split("/", 1)
         thread_states = {}

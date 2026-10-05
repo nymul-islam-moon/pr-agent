@@ -117,6 +117,26 @@ def test_accepted_risk_survives_nearby_code_changes():
     assert apply_filter([new], [comment(old, body=rendered_comment_body(old)), reply]) == []
 
 
+@pytest.mark.parametrize("permission", ["write", "maintain", "admin"])
+def test_private_member_decision_is_honored_by_repository_permission(permission):
+    # GITHUB_TOKEN reports private org members as CONTRIBUTOR.
+    item = suggestion()
+    reply = comment(item, comment_id=2, reply_to=1, author="private-member", association="CONTRIBUTOR",
+                    body="pr-agent: accepted-risk")
+    reply["author_permission"] = permission
+    assert apply_filter([item], [comment(item), reply], states={1: {"resolved": True}}) == []
+
+
+@pytest.mark.parametrize("permission", [None, "", "read", "none"])
+def test_decision_without_write_permission_is_ignored(permission):
+    item = suggestion()
+    reply = comment(item, comment_id=2, reply_to=1, author="reader", association="CONTRIBUTOR",
+                    body="pr-agent: ignore")
+    if permission is not None:
+        reply["author_permission"] = permission
+    assert len(apply_filter([item], [comment(item), reply], states={1: {"resolved": True}})) == 1
+
+
 def test_bot_authored_command_is_ignored():
     item = suggestion()
     reply = comment(item, comment_id=2, reply_to=1, body="pr-agent: ignore")
@@ -323,3 +343,48 @@ def test_truncating_fallback_keeps_markers_matchable():
     fixed = provider._try_fix_invalid_inline_comments([{"body": body, "start_line": 3, "start_side": "RIGHT"}])
     assert "```suggestion" not in fixed[0]["body"]
     assert apply_filter([item], [comment(item, body=fixed[0]["body"])]) == []
+
+
+def _decision_provider(raw_comments, repo_obj):
+    provider = GithubProvider.__new__(GithubProvider)
+    provider.repo = "owner/repo"
+    provider.pr_num = 7
+    provider.github_user_id = "pr-agent[bot]"
+    provider.repo_obj = repo_obj
+    provider.pr = SimpleNamespace(get_comments=lambda: PaginatedComments(raw_comments))
+    response = {"data": {"repository": {"pullRequest": {"reviewThreads": {
+        "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+    requester = MagicMock()
+    requester.requestJson.return_value = (200, {}, json.dumps(response))
+    provider.github_client = SimpleNamespace(_Github__requester=requester)
+    return provider
+
+
+def _raw_reply(comment_id, login, body):
+    raw = {"id": comment_id, "in_reply_to_id": 1, "body": body, "path": "src/app.py",
+           "diff_hunk": "return old()", "user": {"login": login}, "author_association": "CONTRIBUTOR"}
+    return SimpleNamespace(id=comment_id, raw_data=raw)
+
+
+def test_provider_adds_permission_only_for_decision_replies_once_per_author():
+    repo_obj = MagicMock(full_name="owner/repo")
+    repo_obj.get_collaborator_permission.return_value = "write"
+    provider = _decision_provider([_raw_comment(1),
+                                   _raw_reply(2, "member", "pr-agent: ignore"),
+                                   _raw_reply(3, "member", "pr-agent: accepted-risk"),
+                                   _raw_reply(4, "other", "Will fix later.")], repo_obj)
+
+    comments = provider.get_code_suggestion_history()["comments"]
+
+    assert [item.get("author_permission") for item in comments] == [None, "write", "write", None]
+    repo_obj.get_collaborator_permission.assert_called_once_with("member")
+
+
+def test_provider_permission_lookup_error_falls_back_to_association():
+    repo_obj = MagicMock(full_name="owner/repo")
+    repo_obj.get_collaborator_permission.side_effect = RuntimeError("forbidden")
+    provider = _decision_provider([_raw_comment(1), _raw_reply(2, "member", "pr-agent: ignore")], repo_obj)
+
+    comments = provider.get_code_suggestion_history()["comments"]
+
+    assert comments[1]["author_permission"] == ""
