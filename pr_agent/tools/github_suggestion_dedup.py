@@ -14,6 +14,8 @@ MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 SUGGESTION_BLOCK_RE = re.compile(r"```suggestion[^\n]*\n(.*?)```", re.DOTALL)
 DIFF_BLOCK_RE = re.compile(r"```diff[^\n]*\n(.*?)```", re.DOTALL)
+PROPOSED_CODE_CAPTION = "Proposed code (not offered as a committable change"
+PROPOSED_BLOCK_RE = re.compile(re.escape(PROPOSED_CODE_CAPTION) + r"[^\n]*\n```[^\n]*\n(.*?)```", re.DOTALL)
 DETAILS_BLOCK_RE = re.compile(r"<details>.*?(?:</details>|\Z)", re.DOTALL | re.IGNORECASE)
 
 # A one-line fix can legitimately recur at unrelated locations in the same file, so
@@ -159,6 +161,9 @@ def _prior_proposed_code(body: str) -> str:
     match = DIFF_BLOCK_RE.search(str(body or ""))
     if match:
         return added_lines_of_diff(match.group(1))
+    match = PROPOSED_BLOCK_RE.search(str(body or ""))
+    if match:
+        return normalize_code(match.group(1))
     return ""
 
 
@@ -170,6 +175,7 @@ def _prior_semantic(body: str) -> str:
     """
     body = DETAILS_BLOCK_RE.sub(" ", str(body or ""))
     body = body.split("```suggestion", 1)[0]
+    body = body.split(PROPOSED_CODE_CAPTION, 1)[0]
     body = re.sub(r"^\s*\*\*Suggestion:\*\*\s*", "", body, flags=re.IGNORECASE)
     body = re.sub(r",\s*importance:\s*\d+(?:\.\d+)?", "", body, flags=re.IGNORECASE)
     return normalize_text(body)
