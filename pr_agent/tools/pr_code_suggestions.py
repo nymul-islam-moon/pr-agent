@@ -35,7 +35,8 @@ from pr_agent.git_providers.git_provider import (GitProvider, IncrementalPR,
                                                  get_main_pr_language)
 from pr_agent.log import get_logger
 from pr_agent.servers.help import HelpMessage
-from pr_agent.tools.github_suggestion_dedup import (code_marker_for,
+from pr_agent.tools.github_suggestion_dedup import (PROPOSED_CODE_CAPTION,
+                                                    code_marker_for,
                                                     filter_duplicate_suggestions,
                                                     marker_for)
 from pr_agent.tools.pr_description import insert_br_after_x_chars
@@ -730,7 +731,7 @@ class PRCodeSuggestions:
             else:
                 body = header
                 if new_code_snippet:
-                    body += (f"\n\nProposed code (not offered as a committable change because {fallback_reason}):\n"
+                    body += (f"\n\n{PROPOSED_CODE_CAPTION} because {fallback_reason}):\n"
                              f"```\n{new_code_snippet}\n```")
 
             if d.get('finding_fingerprint'):

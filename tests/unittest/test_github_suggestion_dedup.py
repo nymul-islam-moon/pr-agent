@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from pr_agent.git_providers.github_provider import GithubProvider
-from pr_agent.tools.github_suggestion_dedup import (code_finding_fingerprint,
+from pr_agent.tools.github_suggestion_dedup import (PROPOSED_CODE_CAPTION,
+                                                    code_finding_fingerprint,
                                                     code_marker_for,
                                                     filter_duplicate_suggestions,
                                                     finding_fingerprint,
@@ -323,3 +324,29 @@ def test_truncating_fallback_keeps_markers_matchable():
     fixed = provider._try_fix_invalid_inline_comments([{"body": body, "start_line": 3, "start_side": "RIGHT"}])
     assert "```suggestion" not in fixed[0]["body"]
     assert apply_filter([item], [comment(item, body=fixed[0]["body"])]) == []
+
+
+def proposed_code_body(content, code):
+    return (f"**Suggestion:** {content} [security, importance: 8]\n\n"
+            f"{PROPOSED_CODE_CAPTION} because the existing code does not match the anchored range):\n"
+            f"```\n{code}\n```")
+
+
+def test_non_committable_proposed_code_is_matched_when_the_model_rewrites_it():
+    old = suggestion(improved_code=LONG_FIX, existing_code="SECRET = getenv('S', 'default')\n...\nreturn a == b")
+    new = suggestion(improved_code=LONG_FIX, one_sentence_summary="Verify signatures in constant time",
+                     suggestion_content="Use hmac.compare_digest and fail closed without a secret.",
+                     existing_code="SECRET = getenv('S', 'default')\n...\nreturn a == b")
+    prior = comment(old, body=proposed_code_body("Timing attack on the webhook signature.", LONG_FIX),
+                    diff_hunk="@@ -0,0 +1,45 @@\n+import os\n+SECRET = getenv('S', 'default')\n"
+                              "+def verify(a):\n+    return a == b")
+    assert apply_filter([new], [prior]) == []
+
+
+def test_non_committable_prose_excludes_the_proposed_code_block():
+    old = suggestion()
+    new = suggestion(one_sentence_summary="Unrelated cache defect",
+                     suggestion_content="Scope the cache key to the tenant.",
+                     existing_code="cache.set(key, value)", improved_code="cache.set(tenant_key, value)")
+    prior = comment(old, body=proposed_code_body(old["suggestion_content"], LONG_FIX))
+    assert len(apply_filter([new], [prior])) == 1
